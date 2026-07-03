@@ -50,8 +50,8 @@ even grid on your focused screen, driven by two hotkeys.
 
 | Hotkey | Action |
 | --- | --- |
-| **⌥⌘C** | Open another board batch and tile it |
-| **⌥⌘R** | Re-tile all Claude board windows currently open |
+| **⌥⌘C** | Open a batch of chats and tile the whole board into an even grid |
+| **⌥⌘R** | Re-tile all Claude board windows currently open (into an even grid) |
 | **⌥⌘X** | Close Claude board windows |
 
 ## Configuration
@@ -60,11 +60,15 @@ All knobs live at the top of `claude-board.lua`:
 
 - `CLAUDE_URLS` — your standing set of chats. Use `https://claude.ai/new` for a
   fresh chat, or paste a specific conversation as `https://claude.ai/chat/<id>`.
-  Add or remove freely; **⌥⌘C** uses as many as needed to fill `BOARD_TILE_LIMIT`.
-- `BOARD_TILE_LIMIT` — how many tiles each **⌥⌘C** press should create. Defaults
-  to `4`, which gives each new batch a steady 2x2. If the desktop app is already
-  open and included, it counts as one of those tiles, so the default batch is
-  either four web chats or three web chats plus the desktop app.
+  Add or remove freely; the list is cycled as needed to fill each batch.
+- `BOARD_TILE_LIMIT` — how many tiles a fresh (cold-start) **⌥⌘C** creates.
+  Defaults to `4`, a steady 2x2. If the desktop app is already open and included,
+  it counts as one of those tiles, so the cold-start batch is either four web
+  chats or the desktop app plus three web chats (1 + 3 = 4). Keep it even.
+- `ADD_BATCH` — how many new chats each later **⌥⌘C** press adds once a board
+  already exists. Defaults to `4`, so the board grows 4 → 8 → 12. Keep it even so
+  the board stays even. If a batch would ever leave an odd total, the board opens
+  one extra chat so the grid is always even.
 - `INCLUDE_DESKTOP` — `true` puts the Claude desktop app in the top-left cell and
   lets the chats fill the rest; `false` is browser-only (the original behavior).
 - `DESKTOP_BUNDLE_ID` — the native app's bundle id,
@@ -96,13 +100,18 @@ open stays at four tiles. If the desktop app is minimized, its window still
 counts: the script reserves one of those four slots, unminimizes it, and includes
 it in the grid.
 
-Each **⌥⌘C** press is capped by `BOARD_TILE_LIMIT`. With the default settings,
-that means each press opens either three browser chats plus the desktop app, or
-four browser chats when the desktop app has no window open. Whenever the desktop
-app has a window, every **⌥⌘C** press reserves its slot and places it —
-unminimizing it first if needed — so it is always included in the grid, even on
-later presses. Pressing **⌥⌘C** again adds another batch; **⌥⌘R** then lays out
-the full board.
+A cold-start **⌥⌘C** fills up to `BOARD_TILE_LIMIT`. With the default settings,
+that means either the desktop app plus three browser chats (1 + 3 = 4), or four
+browser chats when the desktop app has no window open. Once a board already
+exists, each **⌥⌘C** stacks another `ADD_BATCH` of chats on top and re-tiles the
+whole board, so it grows 4 → 8 → 12. Whenever the desktop app has a window, every
+retile reserves its slot and places it — unminimizing it first if needed — so it
+is always included in the grid, even on later presses.
+
+Because the desktop app is a single (odd) tile, the board counts it in and tops
+the batch up when needed so the total stays even: 1 desktop + 3 chats = 4, then
++4 each press. If a batch or a manual close ever leaves an odd number of windows,
+**⌥⌘C** and **⌥⌘R** open one extra chat so the grid is always even.
 
 Two things to know:
 
@@ -117,10 +126,13 @@ Two things to know:
 
 ## How it works
 
-The grid uses a square board surface: 2x2, 3x3, 4x4, 5x5, and so on. Each fresh
-batch is capped by `BOARD_TILE_LIMIT`; when re-tiling existing windows, the
-script lays out every remembered or discovered Claude board window and ignores
-non-Claude browser windows. Browser tiles open as app-mode windows
+The board always tiles an even number of windows, packed into a filled
+rectangle: 4 → 2x2, 6 → 3x2, 8 → 4x2, 12 → 4x3, 16 → 4x4 (wider than tall, to
+suit widescreen displays). A cold-start batch is sized by `BOARD_TILE_LIMIT` and
+later presses add `ADD_BATCH` chats each; either way the count is rounded up to
+even before tiling. When re-tiling existing windows, the script lays out every
+remembered or discovered Claude board window and ignores non-Claude browser
+windows. Browser tiles open as app-mode windows
 (`open -na <browser> --args --app='<url>'`) for clean frames with no tabs or
 toolbar, then get moved into their cells. The board snapshots browser windows
 before each open and remembers the newly created Claude window, so unrelated

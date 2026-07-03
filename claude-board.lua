@@ -23,10 +23,15 @@ local CLAUDE_URLS = {
   "https://claude.ai/new",
 }
 
--- How many tiles Opt+Cmd+C should create on a fresh board open.
+-- How many tiles a fresh (cold-start) Opt+Cmd+C should create.
 -- The default 4 keeps the board in a steady 2x2. If the desktop app is
--- already open and included, it counts as one of these tiles.
+-- already open and included, it counts as one of these tiles (1 desktop +
+-- 3 chats = 4). Keep this even so the board starts even.
 local BOARD_TILE_LIMIT = 4
+
+-- How many new chats each later Opt+Cmd+C press adds once a board already
+-- exists. Keep this even so the board stays even as it grows: 4 -> 8 -> 12.
+local ADD_BATCH = 4
 
 ------------------------------------------------------------------------
 -- 2) Include the Claude desktop app as a tile?
@@ -80,11 +85,24 @@ local PLACE_DELAY   = 0.45  -- seconds to wait for a window before moving it
 local OPEN_RETRY_INTERVAL = 0.25
 local OPEN_MAX_WAIT       = 3.0
 
--- Square grid surface (cols x rows) for n windows. This keeps the board
--- visually even as it grows: 2x2, 3x3, 4x4, 5x5, etc.
+-- Balanced grid surface (cols x rows) for n windows. The board always tiles an
+-- even number of windows (see evenCount + the open/retile logic), and this packs
+-- an even count into a filled rectangle rather than a square with a gap:
+-- 4 -> 2x2, 6 -> 3x2, 8 -> 4x2, 12 -> 4x3, 16 -> 4x4. Wider than tall, which
+-- suits typical widescreen displays.
 local function gridDims(n)
-  local side = math.ceil(math.sqrt(n))
-  return side, side
+  if n <= 0 then return 1, 1 end
+  local rows = math.floor(math.sqrt(n))
+  if rows < 1 then rows = 1 end
+  local cols = math.ceil(n / rows)
+  return cols, rows
+end
+
+-- Round a tile count up to the nearest even number so the grid is always even.
+local function evenCount(n)
+  if n <= 0 then return 0 end
+  if n % 2 == 1 then return n + 1 end
+  return n
 end
 
 -- Frame for cell index i (0-based) on the given screen.
@@ -393,115 +411,158 @@ local function claudeBrowserWindows(limit)
   return wins
 end
 
-local function openBrowserTile(url, idx, n, screen)
+-- Open one app-mode chat window, remember it as a board window, and invoke
+-- callback(win) once it appears (callback(nil) if it never does). Every new tile
+-- is created here, so openBoard and retileExisting share one "open, remember,
+-- then retile" shape.
+local function openChatWindow(url, callback)
   local previousIds = browserWindowIds()
   openAppWindow(url)
 
-  local function placeOpenedWindow(attemptsLeft)
+  local function grab(attemptsLeft)
     local win = newBrowserWindow(previousIds)
     if win then
-      win:setFrame(cellFrame(idx, n, screen))
       rememberBoardWindow(win)
+      if callback then callback(win) end
       return
     end
 
     if attemptsLeft > 0 then
       hs.timer.doAfter(OPEN_RETRY_INTERVAL, function()
-        placeOpenedWindow(attemptsLeft - 1)
+        grab(attemptsLeft - 1)
       end)
     else
       hs.alert.show("Claude browser window not found")
+      if callback then callback(nil) end
     end
   end
 
   hs.timer.doAfter(PLACE_DELAY, function()
-    placeOpenedWindow(math.ceil(OPEN_MAX_WAIT / OPEN_RETRY_INTERVAL))
+    grab(math.ceil(OPEN_MAX_WAIT / OPEN_RETRY_INTERVAL))
   end)
 end
 
-local function placeDesktopTile(idx, n, screen, attemptsLeft)
-  attemptsLeft = attemptsLeft or math.ceil(OPEN_MAX_WAIT / OPEN_RETRY_INTERVAL)
-
-  local win = desktopWindow()
-  if win then
-    win:setFrame(cellFrame(idx, n, screen))
-    rememberBoardWindow(win)
-    return
-  end
-
-  if attemptsLeft > 0 then
-    hs.timer.doAfter(OPEN_RETRY_INTERVAL, function()
-      placeDesktopTile(idx, n, screen, attemptsLeft - 1)
-    end)
-  else
-    hs.alert.show("Claude desktop window not found")
-  end
-end
-
--- Open a fresh board and tile each window as it appears.
-local function openBoard()
-  local screen = hs.screen.mainScreen()
-  -- Include the desktop app only when it actually has a window to tile (a
-  -- minimized one still counts — placeDesktopTile unminimizes it). The app
-  -- process lingers in the background with no windows after you close it, so
-  -- checking the process alone would reserve a slot with nothing to place,
-  -- opening only three browser chats and leaving an empty cell. When the desktop
-  -- app has no window, the board fills every slot with browser chats instead.
-  local wantsDesktop = BOARD_TILE_LIMIT > 0 and desktopHasWindow()
-  local offset = wantsDesktop and 1 or 0
-  local browserCount = math.min(#CLAUDE_URLS, math.max(BOARD_TILE_LIMIT - offset, 0))
-  local n = browserCount + offset
-
-  if n == 0 then return end
-
-  if wantsDesktop then
-    placeDesktopTile(0, n, screen)
-  end
-
-  for i = 1, browserCount do
-    local url = CLAUDE_URLS[i]
-    local idx = (i - 1) + offset
-    hs.timer.doAfter((i - 1) * SPAWN_STAGGER, function()
-      openBrowserTile(url, idx, n, screen)
-    end)
-  end
-end
-
--- Re-tile Claude windows already open (desktop app first, then browser).
-local function retileExisting()
-  local screen = hs.screen.mainScreen()
+-- Every Claude board window right now, deduped and ordered desktop-first: the
+-- desktop app (only when it actually has a window to tile), then the remembered
+-- board set, then any discovered claude.ai browser windows. Used both to count
+-- the board before growing it and to gather the full set for a retile.
+local function currentBoardWindows()
   local wins = {}
   local seen = {}
 
-  local function addWindow(win)
+  local function add(win)
     local key = isLiveWindow(win) and windowKey(win) or nil
     if key and not seen[key] then
-      wins[#wins + 1] = win
+      wins[#wins + 1] = prepareWindow(win)
       seen[key] = true
     end
   end
 
-  addWindow(desktopWindow())
+  if desktopHasWindow() then add(desktopWindow()) end
 
-  for _, win in ipairs(activeBoardWindows()) do
-    addWindow(win)
-  end
+  for _, win in ipairs(activeBoardWindows()) do add(win) end
+  for _, win in ipairs(claudeBrowserWindows()) do add(win) end
 
-  for _, win in ipairs(claudeBrowserWindows()) do
-    addWindow(win)
-  end
+  return wins
+end
 
-  if #wins == 0 then
-    hs.alert.show("No Claude board windows found")
-    return
-  end
-
+-- Lay a set of windows into the grid and (re)remember them. gridDims packs an
+-- even count into a filled rectangle.
+local function tileWindows(wins, screen)
+  screen = screen or hs.screen.mainScreen()
   for i, w in ipairs(wins) do
     w:setFrame(cellFrame(i - 1, #wins, screen))
     rememberBoardWindow(w)
   end
+end
 
-  hs.alert.show(string.format("Retiled %d Claude board window%s", #wins, #wins == 1 and "" or "s"))
+-- Gather the whole board and tile it into an EVEN grid: if the count is odd,
+-- open one extra chat first, then tile. Shared by openBoard's finalization and
+-- the retile hotkey so "the grid is always even" holds however we got here.
+local function tileBoardEven(screen, announce)
+  screen = screen or hs.screen.mainScreen()
+  local wins = currentBoardWindows()
+
+  local function report(all)
+    if announce then
+      hs.alert.show(string.format(
+        "Retiled %d Claude board window%s", #all, #all == 1 and "" or "s"))
+    end
+  end
+
+  if #wins == 0 then
+    if announce then hs.alert.show("No Claude board windows found") end
+    return
+  end
+
+  if #wins % 2 == 1 then
+    openChatWindow(CLAUDE_URLS[1], function()
+      hs.timer.doAfter(PLACE_DELAY, function()
+        local all = currentBoardWindows()
+        tileWindows(all, screen)
+        report(all)
+      end)
+    end)
+    return
+  end
+
+  tileWindows(wins, screen)
+  report(wins)
+end
+
+-- Open a board and tile it into an even grid.
+--
+-- Cold start (no board windows yet, or only the desktop app holding a slot):
+-- fill up to BOARD_TILE_LIMIT, so with the desktop app open you get 1 desktop +
+-- 3 chats = 4. Once a board already exists, each press stacks another ADD_BATCH
+-- of chats on top (4 -> 8 -> 12). Either way the batch is topped up so the final
+-- count is even before tiling, and the closing retile enforces even once more in
+-- case a window failed to open — the grid is always even.
+local function openBoard()
+  local screen = hs.screen.mainScreen()
+  local haveCount = #currentBoardWindows()
+
+  local newCount
+  if haveCount <= 1 then
+    newCount = math.max(BOARD_TILE_LIMIT - haveCount, 0)
+  else
+    newCount = ADD_BATCH
+  end
+
+  -- Keep the grid even: if this batch would leave an odd total, open one more.
+  newCount = evenCount(haveCount + newCount) - haveCount
+
+  if newCount <= 0 then
+    tileBoardEven(screen, false)
+    return
+  end
+
+  -- Open chats one at a time (each recomputes the "new window" baseline), then
+  -- retile the whole board once the last one has landed.
+  local function openNext(i)
+    if i > newCount then
+      hs.timer.doAfter(PLACE_DELAY, function()
+        tileBoardEven(screen, false)
+      end)
+      return
+    end
+
+    local url = CLAUDE_URLS[((i - 1) % #CLAUDE_URLS) + 1]
+    openChatWindow(url, function()
+      hs.timer.doAfter(SPAWN_STAGGER, function()
+        openNext(i + 1)
+      end)
+    end)
+  end
+
+  openNext(1)
+end
+
+-- Re-tile Claude windows already open (desktop app first, then browser) into an
+-- even grid. If the board holds an odd number of windows, one more chat is
+-- opened first so the grid stays even.
+local function retileExisting()
+  tileBoardEven(hs.screen.mainScreen(), true)
 end
 
 -- Close Claude board windows without touching unrelated browser windows.
