@@ -1,0 +1,11 @@
+# macOS
+.DS_Store
+
+# Hammerspoon runtime / local state (in case the repo is used as ~/.hammerspoon)
+.hammerspoon/
+*.log
+
+# Editor cruft
+.vscode/
+.idea/
+*.swp
