@@ -133,20 +133,66 @@ local function desktopWindow()
   return firstUsableWindow(app)
 end
 
+local function browserApps()
+  local apps = {}
+  local seen = {}
+
+  for _, app in ipairs(hs.application.runningApplications()) do
+    if app:name() == BROWSER then
+      local key = app:pid() or tostring(app)
+      if not seen[key] then
+        apps[#apps + 1] = app
+        seen[key] = true
+      end
+    end
+  end
+
+  return apps
+end
+
 local function isClaudeBrowserWindow(win)
   local title = (win:title() or ""):lower()
 
   -- Claude app-mode browser windows are usually "New chat - Claude" or
-  -- "<conversation title> - Claude". Avoid broad substring matching so pages
-  -- like GitHub repos named "claude-board" do not get swept into the grid.
-  return title == "claude" or title:match("%s%-%sclaude$") ~= nil
+  -- "<conversation title> - Claude". Some Chrome builds append the browser name.
+  -- Avoid broad substring matching so pages like GitHub repos named
+  -- "claude-board" do not get swept into the grid.
+  return title == "claude"
+    or title:match("%s%-%sclaude$") ~= nil
+    or title:match("%s%-%sclaude%s%-%s") ~= nil
+    or title:match("^claude%s%-%s") ~= nil
+end
+
+local function claudeBrowserWindows(limit)
+  local wins = {}
+  local seen = {}
+
+  for _, app in ipairs(browserApps()) do
+    for _, win in ipairs(app:allWindows()) do
+      local key = win:id() or tostring(win)
+      if not seen[key] and isClaudeBrowserWindow(win) then
+        wins[#wins + 1] = win
+        seen[key] = true
+        if limit and #wins >= limit then return wins end
+      end
+    end
+  end
+
+  return wins
 end
 
 local function openBrowserTile(url, idx, n, screen)
   openAppWindow(url)
   hs.timer.doAfter(PLACE_DELAY, function()
-    local app = hs.application.get(BROWSER)
-    local win = app and app:focusedWindow()
+    local win = hs.window.focusedWindow()
+    local focusedApp = win and win:application()
+    if not (focusedApp and focusedApp:name() == BROWSER) then
+      for _, app in ipairs(browserApps()) do
+        win = app:focusedWindow()
+        if win then break end
+      end
+    end
+
     if win then win:setFrame(cellFrame(idx, n, screen)) end
   end)
 end
@@ -185,12 +231,14 @@ local function retileExisting()
     wins[#wins + 1] = dwin
   end
 
-  local app = hs.application.get(BROWSER)
-  if app then
-    for _, w in ipairs(app:allWindows()) do
-      if #wins >= BOARD_TILE_LIMIT then break end
-      if isClaudeBrowserWindow(w) then wins[#wins + 1] = w end
-    end
+  local browserLimit = math.max(BOARD_TILE_LIMIT - #wins, 0)
+  for _, win in ipairs(claudeBrowserWindows(browserLimit)) do
+    wins[#wins + 1] = win
+  end
+
+  if #wins == 0 then
+    hs.alert.show("No Claude board windows found")
+    return
   end
 
   for i, w in ipairs(wins) do
@@ -207,14 +255,9 @@ local function closeBoard()
     closed = closed + 1
   end
 
-  local app = hs.application.get(BROWSER)
-  if app then
-    for _, w in ipairs(app:allWindows()) do
-      if isClaudeBrowserWindow(w) then
-        w:close()
-        closed = closed + 1
-      end
-    end
+  for _, win in ipairs(claudeBrowserWindows()) do
+    win:close()
+    closed = closed + 1
   end
 
   hs.alert.show(string.format("Closed %d Claude board window%s", closed, closed == 1 and "" or "s"))
