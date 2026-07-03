@@ -479,19 +479,23 @@ end
 -- Gather the whole box and tile it into an EVEN grid: if the count is odd,
 -- open one extra chat first, then tile. Shared by openBox's finalization and
 -- the retile hotkey so "the grid is always even" holds however we got here.
-local function tileBoxEven(screen, announce)
+local function tileBoxEven(screen, verb)
   screen = screen or hs.screen.mainScreen()
   local wins = currentBoxWindows()
 
+  -- verb is the action word to confirm with ("Opened", "Retiled") or nil/false
+  -- to stay silent. Every confirming path shares the closing hotkey's format
+  -- ("<Verb> N Claude Box window(s)") so opening, retiling, and closing all
+  -- give the same standardized feedback.
   local function report(all)
-    if announce then
+    if verb then
       hs.alert.show(string.format(
-        "Retiled %d Claude Box window%s", #all, #all == 1 and "" or "s"))
+        "%s %d Claude Box window%s", verb, #all, #all == 1 and "" or "s"))
     end
   end
 
   if #wins == 0 then
-    if announce then hs.alert.show("No Claude Box windows found") end
+    if verb then hs.alert.show("No Claude Box windows found") end
     return
   end
 
@@ -533,7 +537,7 @@ local function openBox()
   newCount = evenCount(haveCount + newCount) - haveCount
 
   if newCount <= 0 then
-    tileBoxEven(screen, false)
+    tileBoxEven(screen, "Opened")
     return
   end
 
@@ -542,7 +546,7 @@ local function openBox()
   local function openNext(i)
     if i > newCount then
       hs.timer.doAfter(PLACE_DELAY, function()
-        tileBoxEven(screen, false)
+        tileBoxEven(screen, "Opened")
       end)
       return
     end
@@ -562,7 +566,7 @@ end
 -- even grid. If the box holds an odd number of windows, one more chat is
 -- opened first so the grid stays even.
 local function retileExisting()
-  tileBoxEven(hs.screen.mainScreen(), true)
+  tileBoxEven(hs.screen.mainScreen(), "Retiled")
 end
 
 -- Close Claude Box windows without touching unrelated browser windows.
