@@ -102,14 +102,34 @@ local function desktopApp()
   return hs.application.get(DESKTOP_BUNDLE_ID) or hs.application.get(DESKTOP_APP)
 end
 
-local function isLiveWindow(win)
-  if not win then return false end
+local function windowKey(win)
+  if not win then return nil end
+
   local ok, id = pcall(function() return win:id() end)
-  return ok and id ~= nil
+  if ok and id then return id end
+
+  local titleOk, title = pcall(function() return win:title() end)
+  local appOk, app = pcall(function() return win:application() end)
+  local pid = appOk and app and app:pid() or "unknown"
+
+  if titleOk and title and title ~= "" then return tostring(pid) .. ":" .. title end
+  return tostring(win)
+end
+
+local function isLiveWindow(win)
+  return windowKey(win) ~= nil
 end
 
 local function prepareWindow(win)
-  if win and not win:isVisible() then win:unminimize() end
+  if not win then return nil end
+
+  local minimizedOk, minimized = pcall(function() return win:isMinimized() end)
+  if minimizedOk and minimized then win:unminimize() end
+
+  local visibleOk, visible = pcall(function() return win:isVisible() end)
+  if visibleOk and not visible then win:unminimize() end
+
+  pcall(function() win:raise() end)
   return win
 end
 
@@ -144,7 +164,14 @@ local function desktopWindow()
 
   app:unhide()
   app:activate(true)
-  return firstUsableWindow(app)
+
+  local win = firstUsableWindow(app)
+  if win then
+    prepareWindow(win)
+    pcall(function() win:focus() end)
+  end
+
+  return win
 end
 
 local function isBrowserApp(app)
@@ -231,20 +258,20 @@ end
 local function rememberBoardWindow(win)
   if not isLiveWindow(win) then return end
 
-  local key = win:id()
+  local key = windowKey(win)
   for _, existing in ipairs(BOARD_WINDOWS) do
-    if isLiveWindow(existing) and existing:id() == key then return end
+    if isLiveWindow(existing) and windowKey(existing) == key then return end
   end
 
   BOARD_WINDOWS[#BOARD_WINDOWS + 1] = win
 end
 
 local function isRememberedWindow(win)
-  local key = isLiveWindow(win) and win:id() or nil
+  local key = isLiveWindow(win) and windowKey(win) or nil
   if not key then return false end
 
   for _, existing in ipairs(BOARD_WINDOWS) do
-    if isLiveWindow(existing) and existing:id() == key then return true end
+    if isLiveWindow(existing) and windowKey(existing) == key then return true end
   end
 
   return false
@@ -255,7 +282,7 @@ local function activeBoardWindows(limit)
   local seen = {}
 
   for _, win in ipairs(BOARD_WINDOWS) do
-    local key = isLiveWindow(win) and win:id() or nil
+    local key = isLiveWindow(win) and windowKey(win) or nil
     if key and not seen[key] then
       wins[#wins + 1] = prepareWindow(win)
       seen[key] = true
@@ -353,7 +380,7 @@ local function retileExisting()
   local seen = {}
 
   local function addWindow(win)
-    local key = isLiveWindow(win) and win:id() or nil
+    local key = isLiveWindow(win) and windowKey(win) or nil
     if key and not seen[key] then
       wins[#wins + 1] = win
       seen[key] = true
@@ -389,7 +416,7 @@ local function closeBoard()
   local seen = {}
 
   for _, win in ipairs(activeBoardWindows()) do
-    local key = win:id()
+    local key = windowKey(win)
     if key and not seen[key] then
       win:close()
       closed = closed + 1
@@ -398,7 +425,7 @@ local function closeBoard()
   end
 
   local dwin = desktopWindow()
-  local dkey = dwin and dwin:id()
+  local dkey = windowKey(dwin)
   if dwin and dkey and not seen[dkey] then
     dwin:close()
     closed = closed + 1
@@ -406,7 +433,7 @@ local function closeBoard()
   end
 
   for _, win in ipairs(claudeBrowserWindows()) do
-    local key = win:id()
+    local key = windowKey(win)
     if key and not seen[key] then
       win:close()
       closed = closed + 1
