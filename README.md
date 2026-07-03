@@ -54,9 +54,9 @@ All knobs live at the top of `claude-board.lua`:
   fresh chat, or paste a specific conversation as `https://claude.ai/chat/<id>`.
   Add or remove freely; **⌥⌘C** uses as many as needed to fill `BOARD_TILE_LIMIT`.
 - `BOARD_TILE_LIMIT` — how many total tiles **⌥⌘C** should create on a fresh
-  board open. Defaults to `4`. If the desktop app is included, it counts as one
-  of those tiles, so the default is either four web chats or three web chats plus
-  the desktop app.
+  board open. Defaults to `4`, which gives you a steady 2x2 grid. If the desktop
+  app is already open and included, it counts as one of those tiles, so the
+  default is either four web chats or three web chats plus the desktop app.
 - `INCLUDE_DESKTOP` — `true` puts the Claude desktop app in the top-left cell and
   lets the chats fill the rest; `false` is browser-only (the original behavior).
 - `DESKTOP_BUNDLE_ID` — the native app's bundle id,
@@ -67,8 +67,6 @@ All knobs live at the top of `claude-board.lua`:
 - `BROWSER` — `"Google Chrome"` by default. Swap to `"Microsoft Edge"` for Edge.
 - `SPAWN_STAGGER` (0.6s) — delay between opening each browser window.
 - `PLACE_DELAY` (0.45s) — how long to wait for a window to appear before moving it.
-- `DESKTOP_RETRY_INTERVAL` (0.25s) and `DESKTOP_MAX_WAIT` (5.0s) — how long to
-  retry while waiting for the desktop app's Electron window to appear.
 
 If windows don't reliably land in their cells, bump `SPAWN_STAGGER` and
 `PLACE_DELAY` — the timing depends on your machine's speed.
@@ -81,13 +79,13 @@ by adding `--user-data-dir="$HOME/.claude-board-chrome"` to the `open` command i
 
 With `INCLUDE_DESKTOP = true`, **⌥⌘C** places the Claude desktop app as the
 top-left tile alongside your browser chats, and **⌥⌘R** includes it when
-re-tiling. If the app isn't already open, the script launches it and retries for
-up to `DESKTOP_MAX_WAIT` seconds while the Electron window appears.
+re-tiling, but only when the desktop app is already open. If the desktop app is
+closed, the board uses that slot for another browser chat so the default fresh
+open stays at four tiles.
 
 The fresh-open path is capped by `BOARD_TILE_LIMIT`. With the default settings,
-that means **⌥⌘C** opens three browser chats plus the desktop app. If the desktop
-app cannot produce a window during cold start, the script opens the next browser
-chat in that slot instead, keeping the board at four tiles total.
+that means **⌥⌘C** opens either three browser chats plus the desktop app, or four
+browser chats when the desktop app is not open.
 
 Two things to know:
 
@@ -104,9 +102,10 @@ Two things to know:
 
 The grid is `cols = ceil(sqrt(n))`, `rows = ceil(n / cols)` for `n` tiles. On a
 fresh open, `n` is capped by `BOARD_TILE_LIMIT`; when re-tiling existing windows,
-`n` is whatever Claude windows are already open. Browser tiles open as app-mode
-windows (`open -na <browser> --args --app='<url>'`) for clean frames with no tabs
-or toolbar, then get moved into their cells.
+the script also caps the board at `BOARD_TILE_LIMIT` and ignores non-Claude
+browser windows. Browser tiles open as app-mode windows
+(`open -na <browser> --args --app='<url>'`) for clean frames with no tabs or
+toolbar, then get moved into their cells.
 
 ## Why this approach
 

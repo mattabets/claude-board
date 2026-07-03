@@ -23,12 +23,14 @@ local CLAUDE_URLS = {
 }
 
 -- How many tiles Opt+Cmd+C should create on a fresh board open.
--- If the desktop app is included, it counts as one of these tiles.
+-- The default 4 keeps the board in a steady 2x2. If the desktop app is
+-- already open and included, it counts as one of these tiles.
 local BOARD_TILE_LIMIT = 4
 
 ------------------------------------------------------------------------
 -- 2) Include the Claude desktop app as a tile?
---    true  -> the desktop app takes the top-left cell, chats fill the rest.
+--    true  -> the desktop app takes the top-left cell if it is already open;
+--             otherwise that slot becomes another browser chat.
 --    false -> browser windows only (original behavior).
 --
 --    The desktop app is single-window: its Chat / Code / Cowork tabs live
@@ -68,10 +70,9 @@ end
 ------------------------------------------------------------------------
 local SPAWN_STAGGER = 0.6   -- seconds between opening each window
 local PLACE_DELAY   = 0.45  -- seconds to wait for a window before moving it
-local DESKTOP_RETRY_INTERVAL = 0.25
-local DESKTOP_MAX_WAIT       = 5.0
 
--- Even-ish grid (cols x rows) for n windows.
+-- Even-ish grid (cols x rows) for n windows. The fresh-open path caps this
+-- at BOARD_TILE_LIMIT, so the default board is a steady 2x2.
 local function gridDims(n)
   local cols = math.ceil(math.sqrt(n))
   local rows = math.ceil(n / cols)
@@ -91,21 +92,6 @@ end
 
 local function desktopApp()
   return hs.application.get(DESKTOP_BUNDLE_ID) or hs.application.get(DESKTOP_APP)
-end
-
-local function launchDesktopApp()
-  if DESKTOP_BUNDLE_ID and DESKTOP_BUNDLE_ID ~= "" then
-    hs.application.launchOrFocusByBundleID(DESKTOP_BUNDLE_ID)
-  else
-    hs.application.open(DESKTOP_APP)
-  end
-
-  local app = desktopApp()
-  if app then
-    app:unhide()
-    app:activate(true)
-  end
-  return app
 end
 
 local function prepareWindow(win)
@@ -136,6 +122,25 @@ local function firstUsableWindow(app)
   return prepareWindow(fallback)
 end
 
+local function desktopWindow()
+  if not INCLUDE_DESKTOP then return nil end
+
+  local app = desktopApp()
+  if not app then return nil end
+
+  app:unhide()
+  return firstUsableWindow(app)
+end
+
+local function isClaudeBrowserWindow(win)
+  local title = (win:title() or ""):lower()
+
+  -- Claude app-mode browser windows are usually "New chat - Claude" or
+  -- "<conversation title> - Claude". Avoid broad substring matching so pages
+  -- like GitHub repos named "claude-board" do not get swept into the grid.
+  return title == "claude" or title:match("%s%-%sclaude$") ~= nil
+end
+
 local function openBrowserTile(url, idx, n, screen)
   openAppWindow(url)
   hs.timer.doAfter(PLACE_DELAY, function()
@@ -145,39 +150,11 @@ local function openBrowserTile(url, idx, n, screen)
   end)
 end
 
--- Place the desktop app into cell `idx`, launching it first if needed.
-local function placeDesktopApp(idx, n, screen, attemptsLeft, onMissing)
-  local firstAttempt = attemptsLeft == nil
-  attemptsLeft = attemptsLeft or math.ceil(DESKTOP_MAX_WAIT / DESKTOP_RETRY_INTERVAL)
-
-  local app = desktopApp()
-  if app then
-    app:unhide()
-    if firstAttempt then app:activate(true) end
-  else
-    app = launchDesktopApp()
-  end
-
-  local win = firstUsableWindow(app)
-  if win then
-    win:setFrame(cellFrame(idx, n, screen))
-    return
-  end
-
-  if attemptsLeft > 0 then
-    hs.timer.doAfter(DESKTOP_RETRY_INTERVAL, function()
-      placeDesktopApp(idx, n, screen, attemptsLeft - 1, onMissing)
-    end)
-  else
-    hs.alert.show("Claude desktop window not found")
-    if onMissing then onMissing() end
-  end
-end
-
--- Open the whole set and tile each window as it appears.
+-- Open a fresh board and tile each window as it appears.
 local function openBoard()
   local screen = hs.screen.mainScreen()
-  local wantsDesktop = INCLUDE_DESKTOP and BOARD_TILE_LIMIT > 0
+  local dwin = desktopWindow()
+  local wantsDesktop = dwin ~= nil and BOARD_TILE_LIMIT > 0
   local offset = wantsDesktop and 1 or 0
   local browserCount = math.min(#CLAUDE_URLS, math.max(BOARD_TILE_LIMIT - offset, 0))
   local n = browserCount + offset
@@ -185,10 +162,7 @@ local function openBoard()
   if n == 0 then return end
 
   if wantsDesktop then
-    placeDesktopApp(0, n, screen, nil, function()
-      local fallbackUrl = CLAUDE_URLS[browserCount + 1]
-      if fallbackUrl then openBrowserTile(fallbackUrl, 0, n, screen) end
-    end)
+    dwin:setFrame(cellFrame(0, n, screen))
   end
 
   for i = 1, browserCount do
@@ -205,17 +179,16 @@ local function retileExisting()
   local screen = hs.screen.mainScreen()
   local wins = {}
 
-  if INCLUDE_DESKTOP then
-    local dapp = desktopApp()
-    local dwin = firstUsableWindow(dapp)
-    if dwin then wins[#wins + 1] = dwin end
+  local dwin = desktopWindow()
+  if dwin then
+    wins[#wins + 1] = dwin
   end
 
   local app = hs.application.get(BROWSER)
   if app then
     for _, w in ipairs(app:allWindows()) do
-      local t = (w:title() or ""):lower()
-      if t:find("claude") then wins[#wins + 1] = w end
+      if #wins >= BOARD_TILE_LIMIT then break end
+      if isClaudeBrowserWindow(w) then wins[#wins + 1] = w end
     end
   end
 
