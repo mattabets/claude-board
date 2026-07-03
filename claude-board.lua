@@ -60,6 +60,12 @@ local DESKTOP_APP     = "Claude"
 --      ... --args --user-data-dir="$HOME/.claude-board-chrome" --app='%s'
 ------------------------------------------------------------------------
 local BROWSER = "Google Chrome"
+local BROWSER_BUNDLE_IDS = {
+  ["Google Chrome"] = "com.google.Chrome",
+  ["Microsoft Edge"] = "com.microsoft.edgemac",
+}
+
+local BOARD_WINDOWS = {}
 
 local function openAppWindow(url)
   hs.execute(string.format(
@@ -93,6 +99,12 @@ end
 
 local function desktopApp()
   return hs.application.get(DESKTOP_BUNDLE_ID) or hs.application.get(DESKTOP_APP)
+end
+
+local function isLiveWindow(win)
+  if not win then return false end
+  local ok, id = pcall(function() return win:id() end)
+  return ok and id ~= nil
 end
 
 local function prepareWindow(win)
@@ -133,12 +145,20 @@ local function desktopWindow()
   return firstUsableWindow(app)
 end
 
+local function isBrowserApp(app)
+  if not app then return false end
+  if app:name() == BROWSER then return true end
+
+  local expectedBundleID = BROWSER_BUNDLE_IDS[BROWSER]
+  return expectedBundleID ~= nil and app:bundleID() == expectedBundleID
+end
+
 local function browserApps()
   local apps = {}
   local seen = {}
 
   for _, app in ipairs(hs.application.runningApplications()) do
-    if app:name() == BROWSER then
+    if isBrowserApp(app) then
       local key = app:pid() or tostring(app)
       if not seen[key] then
         apps[#apps + 1] = app
@@ -163,6 +183,27 @@ local function isClaudeBrowserWindow(win)
     or title:match("^claude%s%-%s") ~= nil
 end
 
+local function rememberBoardWindow(slot, win)
+  if isLiveWindow(win) then BOARD_WINDOWS[slot] = win end
+end
+
+local function activeBoardWindows(limit)
+  local wins = {}
+  local seen = {}
+
+  for slot = 1, BOARD_TILE_LIMIT do
+    local win = BOARD_WINDOWS[slot]
+    local key = isLiveWindow(win) and win:id() or nil
+    if key and not seen[key] then
+      wins[#wins + 1] = prepareWindow(win)
+      seen[key] = true
+      if limit and #wins >= limit then return wins end
+    end
+  end
+
+  return wins
+end
+
 local function claudeBrowserWindows(limit)
   local wins = {}
   local seen = {}
@@ -178,6 +219,16 @@ local function claudeBrowserWindows(limit)
     end
   end
 
+  for _, win in ipairs(hs.window.allWindows()) do
+    local app = win:application()
+    local key = win:id() or tostring(win)
+    if isBrowserApp(app) and not seen[key] and isClaudeBrowserWindow(win) then
+      wins[#wins + 1] = win
+      seen[key] = true
+      if limit and #wins >= limit then return wins end
+    end
+  end
+
   return wins
 end
 
@@ -186,19 +237,24 @@ local function openBrowserTile(url, idx, n, screen)
   hs.timer.doAfter(PLACE_DELAY, function()
     local win = hs.window.focusedWindow()
     local focusedApp = win and win:application()
-    if not (focusedApp and focusedApp:name() == BROWSER) then
+    if not isBrowserApp(focusedApp) then
       for _, app in ipairs(browserApps()) do
         win = app:focusedWindow()
         if win then break end
       end
     end
 
-    if win then win:setFrame(cellFrame(idx, n, screen)) end
+    if win then
+      win:setFrame(cellFrame(idx, n, screen))
+      rememberBoardWindow(idx + 1, win)
+    end
   end)
 end
 
 -- Open a fresh board and tile each window as it appears.
 local function openBoard()
+  BOARD_WINDOWS = {}
+
   local screen = hs.screen.mainScreen()
   local dwin = desktopWindow()
   local wantsDesktop = dwin ~= nil and BOARD_TILE_LIMIT > 0
@@ -210,6 +266,7 @@ local function openBoard()
 
   if wantsDesktop then
     dwin:setFrame(cellFrame(0, n, screen))
+    rememberBoardWindow(1, dwin)
   end
 
   for i = 1, browserCount do
@@ -224,16 +281,27 @@ end
 -- Re-tile Claude windows already open (desktop app first, then browser).
 local function retileExisting()
   local screen = hs.screen.mainScreen()
-  local wins = {}
+  local wins = activeBoardWindows(BOARD_TILE_LIMIT)
+  local seen = {}
 
-  local dwin = desktopWindow()
-  if dwin then
-    wins[#wins + 1] = dwin
+  for _, win in ipairs(wins) do
+    local key = win:id()
+    if key then seen[key] = true end
   end
+
+  local function addWindow(win)
+    local key = isLiveWindow(win) and win:id() or nil
+    if key and not seen[key] and #wins < BOARD_TILE_LIMIT then
+      wins[#wins + 1] = win
+      seen[key] = true
+    end
+  end
+
+  addWindow(desktopWindow())
 
   local browserLimit = math.max(BOARD_TILE_LIMIT - #wins, 0)
   for _, win in ipairs(claudeBrowserWindows(browserLimit)) do
-    wins[#wins + 1] = win
+    addWindow(win)
   end
 
   if #wins == 0 then
@@ -243,23 +311,44 @@ local function retileExisting()
 
   for i, w in ipairs(wins) do
     w:setFrame(cellFrame(i - 1, #wins, screen))
+    rememberBoardWindow(i, w)
   end
+
+  hs.alert.show(string.format("Retiled %d Claude board window%s", #wins, #wins == 1 and "" or "s"))
 end
 
 -- Close Claude board windows without touching unrelated browser windows.
 local function closeBoard()
   local closed = 0
+  local seen = {}
+
+  for _, win in ipairs(activeBoardWindows()) do
+    local key = win:id()
+    if key and not seen[key] then
+      win:close()
+      closed = closed + 1
+      seen[key] = true
+    end
+  end
+
   local dwin = desktopWindow()
-  if dwin then
+  local dkey = dwin and dwin:id()
+  if dwin and dkey and not seen[dkey] then
     dwin:close()
     closed = closed + 1
+    seen[dkey] = true
   end
 
   for _, win in ipairs(claudeBrowserWindows()) do
-    win:close()
-    closed = closed + 1
+    local key = win:id()
+    if key and not seen[key] then
+      win:close()
+      closed = closed + 1
+      seen[key] = true
+    end
   end
 
+  BOARD_WINDOWS = {}
   hs.alert.show(string.format("Closed %d Claude board window%s", closed, closed == 1 and "" or "s"))
 end
 

@@ -106,10 +106,12 @@ fresh open, `n` is capped by `BOARD_TILE_LIMIT`; when re-tiling existing windows
 the script also caps the board at `BOARD_TILE_LIMIT` and ignores non-Claude
 browser windows. Browser tiles open as app-mode windows
 (`open -na <browser> --args --app='<url>'`) for clean frames with no tabs or
-toolbar, then get moved into their cells. Re-tiling and closing scan every
-running Chrome instance, so app-mode windows are handled even when regular
-Chrome windows are also open. The close hotkey uses the same Claude-window
-filter, so unrelated Chrome windows are left alone.
+toolbar, then get moved into their cells. The board remembers windows opened by
+**⌥⌘C**, so **⌥⌘R** can re-tile that exact set instead of guessing from the
+sidebar/window list. Re-tiling and closing also scan every running Chrome
+instance as a fallback, so app-mode windows are handled even when regular Chrome
+windows are also open. The close hotkey uses the same Claude-window filter, so
+unrelated Chrome windows are left alone.
 
 ## Why this approach
 
