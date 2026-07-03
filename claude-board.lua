@@ -22,6 +22,10 @@ local CLAUDE_URLS = {
   "https://claude.ai/new",
 }
 
+-- How many tiles Opt+Cmd+C should create on a fresh board open.
+-- If the desktop app is included, it counts as one of these tiles.
+local BOARD_TILE_LIMIT = 4
+
 ------------------------------------------------------------------------
 -- 2) Include the Claude desktop app as a tile?
 --    true  -> the desktop app takes the top-left cell, chats fill the rest.
@@ -132,8 +136,17 @@ local function firstUsableWindow(app)
   return prepareWindow(fallback)
 end
 
+local function openBrowserTile(url, idx, n, screen)
+  openAppWindow(url)
+  hs.timer.doAfter(PLACE_DELAY, function()
+    local app = hs.application.get(BROWSER)
+    local win = app and app:focusedWindow()
+    if win then win:setFrame(cellFrame(idx, n, screen)) end
+  end)
+end
+
 -- Place the desktop app into cell `idx`, launching it first if needed.
-local function placeDesktopApp(idx, n, screen, attemptsLeft)
+local function placeDesktopApp(idx, n, screen, attemptsLeft, onMissing)
   local firstAttempt = attemptsLeft == nil
   attemptsLeft = attemptsLeft or math.ceil(DESKTOP_MAX_WAIT / DESKTOP_RETRY_INTERVAL)
 
@@ -153,32 +166,36 @@ local function placeDesktopApp(idx, n, screen, attemptsLeft)
 
   if attemptsLeft > 0 then
     hs.timer.doAfter(DESKTOP_RETRY_INTERVAL, function()
-      placeDesktopApp(idx, n, screen, attemptsLeft - 1)
+      placeDesktopApp(idx, n, screen, attemptsLeft - 1, onMissing)
     end)
   else
     hs.alert.show("Claude desktop window not found")
+    if onMissing then onMissing() end
   end
 end
 
 -- Open the whole set and tile each window as it appears.
 local function openBoard()
   local screen = hs.screen.mainScreen()
-  local offset = INCLUDE_DESKTOP and 1 or 0
-  local n = #CLAUDE_URLS + offset
+  local wantsDesktop = INCLUDE_DESKTOP and BOARD_TILE_LIMIT > 0
+  local offset = wantsDesktop and 1 or 0
+  local browserCount = math.min(#CLAUDE_URLS, math.max(BOARD_TILE_LIMIT - offset, 0))
+  local n = browserCount + offset
 
-  if INCLUDE_DESKTOP then
-    placeDesktopApp(0, n, screen)   -- desktop app = top-left tile
+  if n == 0 then return end
+
+  if wantsDesktop then
+    placeDesktopApp(0, n, screen, nil, function()
+      local fallbackUrl = CLAUDE_URLS[browserCount + 1]
+      if fallbackUrl then openBrowserTile(fallbackUrl, 0, n, screen) end
+    end)
   end
 
-  for i, url in ipairs(CLAUDE_URLS) do
+  for i = 1, browserCount do
+    local url = CLAUDE_URLS[i]
     local idx = (i - 1) + offset
     hs.timer.doAfter((i - 1) * SPAWN_STAGGER, function()
-      openAppWindow(url)
-      hs.timer.doAfter(PLACE_DELAY, function()
-        local app = hs.application.get(BROWSER)
-        local win = app and app:focusedWindow()
-        if win then win:setFrame(cellFrame(idx, n, screen)) end
-      end)
+      openBrowserTile(url, idx, n, screen)
     end)
   end
 end

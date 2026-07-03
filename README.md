@@ -52,7 +52,11 @@ All knobs live at the top of `claude-board.lua`:
 
 - `CLAUDE_URLS` — your standing set of chats. Use `https://claude.ai/new` for a
   fresh chat, or paste a specific conversation as `https://claude.ai/chat/<id>`.
-  Add or remove freely; the grid resizes to fit.
+  Add or remove freely; **⌥⌘C** uses as many as needed to fill `BOARD_TILE_LIMIT`.
+- `BOARD_TILE_LIMIT` — how many total tiles **⌥⌘C** should create on a fresh
+  board open. Defaults to `4`. If the desktop app is included, it counts as one
+  of those tiles, so the default is either four web chats or three web chats plus
+  the desktop app.
 - `INCLUDE_DESKTOP` — `true` puts the Claude desktop app in the top-left cell and
   lets the chats fill the rest; `false` is browser-only (the original behavior).
 - `DESKTOP_BUNDLE_ID` — the native app's bundle id,
@@ -80,6 +84,11 @@ top-left tile alongside your browser chats, and **⌥⌘R** includes it when
 re-tiling. If the app isn't already open, the script launches it and retries for
 up to `DESKTOP_MAX_WAIT` seconds while the Electron window appears.
 
+The fresh-open path is capped by `BOARD_TILE_LIMIT`. With the default settings,
+that means **⌥⌘C** opens three browser chats plus the desktop app. If the desktop
+app cannot produce a window during cold start, the script opens the next browser
+chat in that slot instead, keeping the board at four tiles total.
+
 Two things to know:
 
 - The desktop app is single-window, so it's exactly one tile. Its Chat / Code /
@@ -93,11 +102,11 @@ Two things to know:
 
 ## How it works
 
-The grid is `cols = ceil(sqrt(n))`, `rows = ceil(n / cols)` for `n` tiles (chats
-plus the desktop app if included), laid out on the focused screen's usable frame
-(excludes the menu bar and Dock). Browser tiles open as app-mode windows
-(`open -na <browser> --args --app='<url>'`) for clean frames with no tabs or
-toolbar, then get moved into their cells.
+The grid is `cols = ceil(sqrt(n))`, `rows = ceil(n / cols)` for `n` tiles. On a
+fresh open, `n` is capped by `BOARD_TILE_LIMIT`; when re-tiling existing windows,
+`n` is whatever Claude windows are already open. Browser tiles open as app-mode
+windows (`open -na <browser> --args --app='<url>'`) for clean frames with no tabs
+or toolbar, then get moved into their cells.
 
 ## Why this approach
 
