@@ -55,12 +55,16 @@ All knobs live at the top of `claude-board.lua`:
   Add or remove freely; the grid resizes to fit.
 - `INCLUDE_DESKTOP` — `true` puts the Claude desktop app in the top-left cell and
   lets the chats fill the rest; `false` is browser-only (the original behavior).
-- `DESKTOP_APP` — the desktop app's name, `"Claude"` by default. See "The desktop
-  app tile" below if that tile doesn't move.
+- `DESKTOP_BUNDLE_ID` — the native app's bundle id,
+  `com.anthropic.claudefordesktop` by default. This is the most reliable way to
+  find the app.
+- `DESKTOP_APP` — the desktop app's name, `"Claude"` by default. Used as a
+  fallback if the bundle id changes.
 - `BROWSER` — `"Google Chrome"` by default. Swap to `"Microsoft Edge"` for Edge.
 - `SPAWN_STAGGER` (0.6s) — delay between opening each browser window.
 - `PLACE_DELAY` (0.45s) — how long to wait for a window to appear before moving it.
-- `COLD_LAUNCH` (1.5s) — extra wait when the desktop app has to launch from closed.
+- `DESKTOP_RETRY_INTERVAL` (0.25s) and `DESKTOP_MAX_WAIT` (5.0s) — how long to
+  retry while waiting for the desktop app's Electron window to appear.
 
 If windows don't reliably land in their cells, bump `SPAWN_STAGGER` and
 `PLACE_DELAY` — the timing depends on your machine's speed.
@@ -73,17 +77,19 @@ by adding `--user-data-dir="$HOME/.claude-board-chrome"` to the `open` command i
 
 With `INCLUDE_DESKTOP = true`, **⌥⌘C** places the Claude desktop app as the
 top-left tile alongside your browser chats, and **⌥⌘R** includes it when
-re-tiling. If the app isn't already open, the script launches it (brief pause the
-first time — that's what `COLD_LAUNCH` covers).
+re-tiling. If the app isn't already open, the script launches it and retries for
+up to `DESKTOP_MAX_WAIT` seconds while the Electron window appears.
 
 Two things to know:
 
 - The desktop app is single-window, so it's exactly one tile. Its Chat / Code /
   Cowork tabs live inside that one pane; tiling can't split them into separate
   cells. Pick the tab you want up front — the tile shows whatever's active.
-- It assumes the app is named `"Claude"`. If that tile doesn't move, focus the app
-  and run `hs.application.frontmostApplication():name()` in the Hammerspoon
-  console, then set `DESKTOP_APP` to whatever it reports.
+- It finds the app by `DESKTOP_BUNDLE_ID` first, then falls back to the app name.
+  If that tile doesn't move, focus the app and run
+  `hs.application.frontmostApplication():bundleID()` in the Hammerspoon console,
+  then set `DESKTOP_BUNDLE_ID` to whatever it reports. You can also run
+  `hs.application.frontmostApplication():name()` and adjust `DESKTOP_APP`.
 
 ## How it works
 

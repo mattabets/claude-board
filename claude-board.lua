@@ -31,12 +31,16 @@ local CLAUDE_URLS = {
 --    inside that one pane, so it's exactly one tile — whichever tab is
 --    active is what shows. Tiling can't split the tabs into separate cells.
 --
---    DESKTOP_APP must match the app's name. If the tile doesn't move, focus
---    the app and run this in the Hammerspoon console:
+--    DESKTOP_BUNDLE_ID is the most reliable way to find the native app. If
+--    Anthropic changes it, focus the app and run this in the Hammerspoon console:
+--      hs.application.frontmostApplication():bundleID()
+--
+--    DESKTOP_APP is a fallback. If the tile still doesn't move, focus the app
+--    and run:
 --      hs.application.frontmostApplication():name()
---    then set DESKTOP_APP to whatever it reports.
 ------------------------------------------------------------------------
 local INCLUDE_DESKTOP = true
+local DESKTOP_BUNDLE_ID = "com.anthropic.claudefordesktop"
 local DESKTOP_APP     = "Claude"
 
 ------------------------------------------------------------------------
@@ -60,7 +64,8 @@ end
 ------------------------------------------------------------------------
 local SPAWN_STAGGER = 0.6   -- seconds between opening each window
 local PLACE_DELAY   = 0.45  -- seconds to wait for a window before moving it
-local COLD_LAUNCH   = 1.5   -- extra wait when the desktop app has to launch
+local DESKTOP_RETRY_INTERVAL = 0.25
+local DESKTOP_MAX_WAIT       = 5.0
 
 -- Even-ish grid (cols x rows) for n windows.
 local function gridDims(n)
@@ -80,16 +85,79 @@ local function cellFrame(i, n, screen)
   return { x = f.x + col * w, y = f.y + row * h, w = w, h = h }
 end
 
+local function desktopApp()
+  return hs.application.get(DESKTOP_BUNDLE_ID) or hs.application.get(DESKTOP_APP)
+end
+
+local function launchDesktopApp()
+  if DESKTOP_BUNDLE_ID and DESKTOP_BUNDLE_ID ~= "" then
+    hs.application.launchOrFocusByBundleID(DESKTOP_BUNDLE_ID)
+  else
+    hs.application.open(DESKTOP_APP)
+  end
+
+  local app = desktopApp()
+  if app then
+    app:unhide()
+    app:activate(true)
+  end
+  return app
+end
+
+local function prepareWindow(win)
+  if win and not win:isVisible() then win:unminimize() end
+  return win
+end
+
+local function firstUsableWindow(app)
+  if not app then return nil end
+
+  local main = app:mainWindow()
+  if main and main:isStandard() then return prepareWindow(main) end
+
+  local fallback = main
+
+  for _, win in ipairs(app:visibleWindows()) do
+    if win:isStandard() then return prepareWindow(win) end
+    fallback = fallback or win
+  end
+
+  for _, win in ipairs(app:allWindows()) do
+    if win:isStandard() then
+      return prepareWindow(win)
+    end
+    fallback = fallback or win
+  end
+
+  return prepareWindow(fallback)
+end
+
 -- Place the desktop app into cell `idx`, launching it first if needed.
-local function placeDesktopApp(idx, n, screen)
-  local running = hs.application.get(DESKTOP_APP) ~= nil
-  hs.application.open(DESKTOP_APP)  -- launches if closed, focuses if already open
-  local wait = running and PLACE_DELAY or COLD_LAUNCH
-  hs.timer.doAfter(wait, function()
-    local app = hs.application.get(DESKTOP_APP)
-    local win = app and app:mainWindow()
-    if win then win:setFrame(cellFrame(idx, n, screen)) end
-  end)
+local function placeDesktopApp(idx, n, screen, attemptsLeft)
+  local firstAttempt = attemptsLeft == nil
+  attemptsLeft = attemptsLeft or math.ceil(DESKTOP_MAX_WAIT / DESKTOP_RETRY_INTERVAL)
+
+  local app = desktopApp()
+  if app then
+    app:unhide()
+    if firstAttempt then app:activate(true) end
+  else
+    app = launchDesktopApp()
+  end
+
+  local win = firstUsableWindow(app)
+  if win then
+    win:setFrame(cellFrame(idx, n, screen))
+    return
+  end
+
+  if attemptsLeft > 0 then
+    hs.timer.doAfter(DESKTOP_RETRY_INTERVAL, function()
+      placeDesktopApp(idx, n, screen, attemptsLeft - 1)
+    end)
+  else
+    hs.alert.show("Claude desktop window not found")
+  end
 end
 
 -- Open the whole set and tile each window as it appears.
@@ -121,8 +189,8 @@ local function retileExisting()
   local wins = {}
 
   if INCLUDE_DESKTOP then
-    local dapp = hs.application.get(DESKTOP_APP)
-    local dwin = dapp and dapp:mainWindow()
+    local dapp = desktopApp()
+    local dwin = firstUsableWindow(dapp)
     if dwin then wins[#wins + 1] = dwin end
   end
 
