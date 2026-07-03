@@ -182,21 +182,6 @@ local function isBrowserApp(app)
   return expectedBundleID ~= nil and app:bundleID() == expectedBundleID
 end
 
-local function isDesktopWindow(win)
-  local app = win and win:application()
-  if not app then return false end
-
-  return app:bundleID() == DESKTOP_BUNDLE_ID or app:name() == DESKTOP_APP
-end
-
-local function rememberedDesktopWindow()
-  for _, win in ipairs(BOARD_WINDOWS) do
-    if isLiveWindow(win) and isDesktopWindow(win) then return win end
-  end
-
-  return nil
-end
-
 local function browserApps()
   local apps = {}
   local seen = {}
@@ -374,8 +359,12 @@ end
 -- Open a fresh board and tile each window as it appears.
 local function openBoard()
   local screen = hs.screen.mainScreen()
+  -- Include the desktop app whenever it is open, regardless of window state.
+  -- placeDesktopTile unminimizes it if needed, so a minimized app still claims
+  -- its slot. Only when the app is not running does the board fall back to
+  -- filling every slot with browser chats.
   local dapp = INCLUDE_DESKTOP and desktopApp() or nil
-  local wantsDesktop = dapp ~= nil and not rememberedDesktopWindow() and BOARD_TILE_LIMIT > 0
+  local wantsDesktop = dapp ~= nil and BOARD_TILE_LIMIT > 0
   local offset = wantsDesktop and 1 or 0
   local browserCount = math.min(#CLAUDE_URLS, math.max(BOARD_TILE_LIMIT - offset, 0))
   local n = browserCount + offset
