@@ -89,9 +89,10 @@ reserves one of those four slots, unminimizes it, and includes it in the grid.
 
 Each **⌥⌘C** press is capped by `BOARD_TILE_LIMIT`. With the default settings,
 that means each press opens either three browser chats plus the desktop app, or
-four browser chats when the desktop app is not open. Once the desktop app is
-already remembered on the board, later **⌥⌘C** presses use all four slots for new
-browser chats. Pressing **⌥⌘C** again adds another batch; **⌥⌘R** then lays out
+four browser chats when the desktop app is not open. Whenever the desktop app is
+open, every **⌥⌘C** press reserves its slot and places it — unminimizing it first
+if needed — so it is always included in the grid regardless of window state, even
+on later presses. Pressing **⌥⌘C** again adds another batch; **⌥⌘R** then lays out
 the full board.
 
 Two things to know:
